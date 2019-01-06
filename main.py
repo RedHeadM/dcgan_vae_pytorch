@@ -318,8 +318,8 @@ for epoch in range(opt.niter):
         batch_size = real_cpu.size(0)
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
-
-        output = netD(input)
+        input_white_noise = input + torch.randn(input.data.size()).cuda()*0.5 *0.1+0.5
+        output = netD(input_white_noise)
         errD_real = criterion(output, label)
         errD_real.backward()
         D_x = output.data.mean()
@@ -335,6 +335,7 @@ for epoch in range(opt.niter):
             n=8
             imgs= torch.cat([gen[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch,i)))  ,nrow=n)
+            save_image(input_white_noise[:n]*0.5+0.5, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}input_white_noise.png".format(epoch,i)))  ,nrow=n)
         label.data.fill_(fake_label)
         gen=fake_buffer.push_and_pop(gen)
 
@@ -385,7 +386,7 @@ for epoch in range(opt.niter):
         D_G_z2 = output.data.mean()
         [p.grad.data.clamp_(-5,5) for p in netG.decoder.parameters()]
         optimizerG.step()
-
+        ###########################
         log.info('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
                  VAEerr.data[0], errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
