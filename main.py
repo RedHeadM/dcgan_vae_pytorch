@@ -20,6 +20,7 @@ from torchvision.utils import save_image
 from torchtcn.utils.dataset import (DoubleViewPairDataset,
                                     MultiViewVideoDataset, ViewPairDataset)
 from torchtcn.utils.comm import get_git_commit_hash,create_dir_if_not_exists
+from utils import ReplayBuffer
 try:
     import visdom
     vis = visdom.Visdom()
@@ -298,7 +299,8 @@ fixed_noise = Variable(fixed_noise)
 # setup optimizer
 optimizerD = optim.Adam(netD.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-
+# Buffers of previously generated samples
+fake_buffer = ReplayBuffer()
 gen_win = None
 rec_win = None
 key_views = ["frames views {}".format(i) for i in range(2)]
@@ -334,6 +336,8 @@ for epoch in range(opt.niter):
             imgs= torch.cat([gen[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch,i)))  ,nrow=n)
         label.data.fill_(fake_label)
+        gen=fake_buffer.push_and_pop(gen)
+
         output = netD(gen.detach())
         errD_fake = criterion(output, label)
         errD_fake.backward()

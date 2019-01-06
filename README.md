@@ -18,7 +18,7 @@ python -m visdom.server
 ## see also
 - https://github.com/soumith/ganhacks
 - https://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-training/
-
+- https://github.com/Sleepychord/ImprovedGAN-pytorch
 
 to start the training:
 ```
