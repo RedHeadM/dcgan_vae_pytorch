@@ -27,6 +27,7 @@ try:
     vis.env = 'vae_dcgan'
 except ImportError:
     vis = None
+    print("visdom not used")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
@@ -38,7 +39,7 @@ parser.add_argument('--nz', type=int, default=100, help='size of the latent z ve
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
 parser.add_argument('--niter', type=int, default=100, help='number of epochs to train for')
-parser.add_argument('--saveInt', type=int, default=5, help='number of epochs between checkpoints')
+parser.add_argument('--saveInt', type=int, default=25, help='number of epochs between checkpoints')
 parser.add_argument('--showimg', type=int, default=500, help='number of steps between  image update')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
@@ -309,25 +310,26 @@ for epoch in range(opt.niter):
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
         ###########################
-        # train with real
         netD.zero_grad()
+        # train with real
         if opt.dataset !='tcn':
             real_cpu, _ = data
         else:
             real_cpu = torch.cat([data[key_views[0]], data[key_views[1]]])
-        batch_size = real_cpu.size(0)
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
-        input_white_noise = input + torch.randn(input.data.size()).cuda()*0.5 *0.1+0.5
+        batch_size = real_cpu.size(0)
+        # train with fake
+        noise.data.resize_(batch_size, nz, 1, 1)
+        noise.data.normal_(0, 1)
+        gen = netG.decoder(noise)
+        gen=fake_buffer.push_and_pop(gen)
+        input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *0.1)+0.5
         output = netD(input_white_noise)
         errD_real = criterion(output, label)
         errD_real.backward()
         D_x = output.data.mean()
 
-        # train with fake
-        noise.data.resize_(batch_size, nz, 1, 1)
-        noise.data.normal_(0, 1)
-        gen = netG.decoder(noise)
         if i % opt.showimg ==0:
 
             if vis is not None:
@@ -337,7 +339,6 @@ for epoch in range(opt.niter):
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch,i)))  ,nrow=n)
             save_image(input_white_noise[:n]*0.5+0.5, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}input_white_noise.png".format(epoch,i)))  ,nrow=n)
         label.data.fill_(fake_label)
-        gen=fake_buffer.push_and_pop(gen)
 
         output = netD(gen.detach())
         errD_fake = criterion(output, label)
