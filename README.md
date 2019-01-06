@@ -19,7 +19,7 @@ python -m visdom.server
 - https://github.com/soumith/ganhacks
 - https://www.inference.vc/instance-noise-a-trick-for-stabilising-gan-training/
 - https://github.com/Sleepychord/ImprovedGAN-pytorch
-
+- https://github.com/lucabergamini/VAEGAN-PYTORCH/blob/master/main.py
 to start the training:
 ```
 usage: main.py [-h] --dataset DATASET --dataroot DATAROOT [--workers WORKERS]

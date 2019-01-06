@@ -13,7 +13,7 @@ import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
-import  logging
+import logging
 from torch.autograd import Variable
 from torchtcn.utils.log import log,set_log_file
 from torchvision.utils import save_image
@@ -343,6 +343,7 @@ for epoch in range(opt.niter):
         errD_fake.backward()
         D_G_z1 = output.data.mean()
         errD = errD_real + errD_fake
+        [p.grad.data.clamp_(-5,5) for p in netD.parameters()]
         optimizerD.step()
         ############################
         # (2) Update G network: VAE
@@ -368,7 +369,7 @@ for epoch in range(opt.niter):
         MSEerr = MSECriterion(rec,input)
 
         VAEerr = KLD + MSEerr;
-        VAEerr.backward()
+        VAEerr.backward(retain_graph=True)
         optimizerG.step()
 
         ############################
@@ -380,8 +381,9 @@ for epoch in range(opt.niter):
         rec = netG(input) # this tensor is freed from mem at this point
         output = netD(rec)
         errG = criterion(output, label)
-        errG.backward()
+        errG.backward(retain_graph=True)
         D_G_z2 = output.data.mean()
+        [p.grad.data.clamp_(-5,5) for p in netG.decoder.parameters()]
         optimizerG.step()
 
         log.info('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
