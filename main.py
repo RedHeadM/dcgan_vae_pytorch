@@ -14,8 +14,13 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import visdom
+import logging
 from torch.autograd import Variable
-
+from torchtcn.utils.log import log,set_log_file
+from torchvision.utils import save_image
+from torchtcn.utils.dataset import (DoubleViewPairDataset,
+                                    MultiViewVideoDataset, ViewPairDataset)
+from torchtcn.utils.comm import get_git_commit_hash,create_dir_if_not_exists
 vis = visdom.Visdom()
 vis.env = 'vae_dcgan'
 
@@ -23,34 +28,33 @@ vis.env = 'vae_dcgan'
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
 parser.add_argument('--dataroot', required=True, help='path to dataset')
-parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
+parser.add_argument('--workers', type=int, help='number of data loading workers', default=4)
 parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
 parser.add_argument('--imageSize', type=int, default=64, help='the height / width of the input image to network')
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--niter', type=int, default=25, help='number of epochs to train for')
-parser.add_argument('--saveInt', type=int, default=25, help='number of epochs between checkpoints')
+parser.add_argument('--niter', type=int, default=100, help='number of epochs to train for')
+parser.add_argument('--saveInt', type=int, default=5, help='number of epochs between checkpoints')
+parser.add_argument('--showimg', type=int, default=500, help='number of steps between  image update')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
-parser.add_argument('--cuda', action='store_true', help='enables cuda')
+parser.add_argument('--cuda', action='store_true',default=True, help='enables cuda')
 parser.add_argument('--ngpu', type=int, default=1, help='number of GPUs to use')
 parser.add_argument('--netG', default='', help="path to netG (to continue training)")
 parser.add_argument('--netD', default='', help="path to netD (to continue training)")
-parser.add_argument('--outf', default='.', help='folder to output images and model checkpoints')
+parser.add_argument('--outf', default='/tmp/dc_gan', help='folder to output images and model checkpoints')
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 
 opt = parser.parse_args()
-print(opt)
-
-try:
-    os.makedirs(opt.outf)
-except OSError:
-    pass
+log.setLevel(logging.INFO)
+set_log_file(os.path.join(opt.outf, "train.log"))
+create_dir_if_not_exists(os.path.join(opt.outf, "images"))
+log.info("commit hash: {}".format(get_git_commit_hash(__file__)))
 
 if opt.manualSeed is None:
     opt.manualSeed = random.randint(1, 10000)
-print("Random Seed: ", opt.manualSeed)
+log.info("Random Seed: ", opt.manualSeed)
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 if opt.cuda:
@@ -59,7 +63,7 @@ if opt.cuda:
 cudnn.benchmark = True
 
 if torch.cuda.is_available() and not opt.cuda:
-    print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+    log.warn("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 if opt.dataset in ['imagenet', 'folder', 'lfw']:
     # folder dataset
@@ -86,6 +90,25 @@ elif opt.dataset == 'cifar10':
                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                            ])
     )
+elif opt.dataset =='tcn':
+    opt.batchSize=opt.batchSize//2 #num views
+    transformer_train = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize(64),  # TODO reize here Resize()
+        # transforms.RandomResizedCrop(IMAGE_SIZE[0], scale=(0.9, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
+    sampler = None
+    shuffle = True
+    # only one view pair in batch
+    # sim_frames = 5
+    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,
+                                                      number_views=2,
+                                                      # std_similar_frame_margin_distribution=sim_frames,
+                                                      transform_frames=transformer_train)
 assert dataset
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
                                          shuffle=True, num_workers=int(opt.workers))
@@ -109,26 +132,26 @@ def weights_init(m):
 class _Sampler(nn.Module):
     def __init__(self):
         super(_Sampler, self).__init__()
-        
+
     def forward(self,input):
         mu = input[0]
         logvar = input[1]
-        
+
         std = logvar.mul(0.5).exp_() #calculate the STDEV
         if opt.cuda:
             eps = torch.cuda.FloatTensor(std.size()).normal_() #random normalized noise
         else:
             eps = torch.FloatTensor(std.size()).normal_() #random normalized noise
         eps = Variable(eps)
-        return eps.mul(std).add_(mu) 
+        return eps.mul(std).add_(mu)
 
 
 class _Encoder(nn.Module):
     def __init__(self,imageSize):
         super(_Encoder, self).__init__()
-        
+
         n = math.log2(imageSize)
-        
+
         assert n==round(n),'imageSize must be a power of 2'
         assert n>=3,'imageSize must be at least 8'
         n=int(n)
@@ -143,9 +166,9 @@ class _Encoder(nn.Module):
         self.encoder.add_module('input-relu',nn.LeakyReLU(0.2, inplace=True))
         for i in range(n-3):
             # state size. (ngf) x 32 x 32
-            self.encoder.add_module('pyramid.{0}-{1}.conv'.format(ngf*2**i, ngf * 2**(i+1)), nn.Conv2d(ngf*2**(i), ngf * 2**(i+1), 4, 2, 1, bias=False))
-            self.encoder.add_module('pyramid.{0}.batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ngf * 2**(i+1)))
-            self.encoder.add_module('pyramid.{0}.relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
+            self.encoder.add_module('pyramid{0}-{1}conv'.format(ngf*2**i, ngf * 2**(i+1)), nn.Conv2d(ngf*2**(i), ngf * 2**(i+1), 4, 2, 1, bias=False))
+            self.encoder.add_module('pyramid{0}batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ngf * 2**(i+1)))
+            self.encoder.add_module('pyramid{0}relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
 
         # state size. (ngf*8) x 4 x 4
 
@@ -160,9 +183,9 @@ class _netG(nn.Module):
         self.ngpu = ngpu
         self.encoder = _Encoder(imageSize)
         self.sampler = _Sampler()
-        
+
         n = math.log2(imageSize)
-        
+
         assert n==round(n),'imageSize must be a power of 2'
         assert n>=3,'imageSize must be at least 8'
         n=int(n)
@@ -176,9 +199,9 @@ class _netG(nn.Module):
         # state size. (ngf * 2**(n-3)) x 4 x 4
 
         for i in range(n-3, 0, -1):
-            self.decoder.add_module('pyramid.{0}-{1}.conv'.format(ngf*2**i, ngf * 2**(i-1)),nn.ConvTranspose2d(ngf * 2**i, ngf * 2**(i-1), 4, 2, 1, bias=False))
-            self.decoder.add_module('pyramid.{0}.batchnorm'.format(ngf * 2**(i-1)), nn.BatchNorm2d(ngf * 2**(i-1)))
-            self.decoder.add_module('pyramid.{0}.relu'.format(ngf * 2**(i-1)), nn.LeakyReLU(0.2, inplace=True))
+            self.decoder.add_module('pyramid{0}-{1}conv'.format(ngf*2**i, ngf * 2**(i-1)),nn.ConvTranspose2d(ngf * 2**i, ngf * 2**(i-1), 4, 2, 1, bias=False))
+            self.decoder.add_module('pyramid{0}batchnorm'.format(ngf * 2**(i-1)), nn.BatchNorm2d(ngf * 2**(i-1)))
+            self.decoder.add_module('pyramid{0}relu'.format(ngf * 2**(i-1)), nn.LeakyReLU(0.2, inplace=True))
 
         self.decoder.add_module('ouput-conv', nn.ConvTranspose2d(    ngf,      nc, 4, 2, 1, bias=False))
         self.decoder.add_module('output-tanh', nn.Tanh())
@@ -194,7 +217,7 @@ class _netG(nn.Module):
             output = self.sampler(output)
             output = self.decoder(output)
         return output
-    
+
     def make_cuda(self):
         self.encoder.cuda()
         self.sampler.cuda()
@@ -204,7 +227,7 @@ netG = _netG(opt.imageSize,ngpu)
 netG.apply(weights_init)
 if opt.netG != '':
     netG.load_state_dict(torch.load(opt.netG))
-print(netG)
+log.info(str(netG))
 
 
 class _netD(nn.Module):
@@ -212,7 +235,7 @@ class _netD(nn.Module):
         super(_netD, self).__init__()
         self.ngpu = ngpu
         n = math.log2(imageSize)
-        
+
         assert n==round(n),'imageSize must be a power of 2'
         assert n>=3,'imageSize must be at least 8'
         n=int(n)
@@ -224,13 +247,13 @@ class _netD(nn.Module):
 
         # state size. (ndf) x 32 x 32
         for i in range(n-3):
-            self.main.add_module('pyramid.{0}-{1}.conv'.format(ngf*2**(i), ngf * 2**(i+1)), nn.Conv2d(ndf * 2 ** (i), ndf * 2 ** (i+1), 4, 2, 1, bias=False))
-            self.main.add_module('pyramid.{0}.batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ndf * 2 ** (i+1)))
-            self.main.add_module('pyramid.{0}.relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
+            self.main.add_module('pyramid{0}-{1}conv'.format(ngf*2**(i), ngf * 2**(i+1)), nn.Conv2d(ndf * 2 ** (i), ndf * 2 ** (i+1), 4, 2, 1, bias=False))
+            self.main.add_module('pyramid{0}batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ndf * 2 ** (i+1)))
+            self.main.add_module('pyramid{0}relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
 
         self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1, 4, 1, 0, bias=False))
         self.main.add_module('output-sigmoid', nn.Sigmoid())
-        
+
 
     def forward(self, input):
         if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
@@ -245,7 +268,7 @@ netD = _netD(opt.imageSize,ngpu)
 netD.apply(weights_init)
 if opt.netD != '':
     netD.load_state_dict(torch.load(opt.netD))
-print(netD)
+log.info(str(netD))
 
 criterion = nn.BCELoss()
 MSECriterion = nn.MSELoss()
@@ -276,7 +299,7 @@ optimizerG = optim.Adam(netG.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 
 gen_win = None
 rec_win = None
-
+key_views = ["frames views {}".format(i) for i in range(2)]
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
         ############################
@@ -284,7 +307,10 @@ for epoch in range(opt.niter):
         ###########################
         # train with real
         netD.zero_grad()
-        real_cpu, _ = data
+        if opt.dataset !='tcn':
+            real_cpu, _ = data
+        else:
+            real_cpu = torch.cat([data[key_views[0]], data[key_views[1]]])
         batch_size = real_cpu.size(0)
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
@@ -298,7 +324,11 @@ for epoch in range(opt.niter):
         noise.data.resize_(batch_size, nz, 1, 1)
         noise.data.normal_(0, 1)
         gen = netG.decoder(noise)
-        gen_win = vis.image(gen.data[0].cpu()*0.5+0.5,win = gen_win)
+        if i % opt.showimg ==0:
+            gen_win = vis.image(gen.data[0].cpu()*0.5+0.5,win = gen_win,opts=dict(title='gen fake',width=300,height=300),)
+            n=8
+            imgs= torch.cat([gen[:n]])*0.5+0.5
+            save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch,i)))  ,nrow=n)
         label.data.fill_(fake_label)
         output = netD(gen.detach())
         errD_fake = criterion(output, label)
@@ -309,22 +339,25 @@ for epoch in range(opt.niter):
         ############################
         # (2) Update G network: VAE
         ###########################
-        
+
         netG.zero_grad()
-        
+
         encoded = netG.encoder(input)
         mu = encoded[0]
         logvar = encoded[1]
-        
+
         KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
         KLD = torch.sum(KLD_element).mul_(-0.5)
-        
+
         sampled = netG.sampler(encoded)
         rec = netG.decoder(sampled)
-        rec_win = vis.image(rec.data[0].cpu()*0.5+0.5,win = rec_win)
-        
+        if i %opt.showimg==0:
+            rec_win = vis.image(rec.data[0].cpu()*0.5+0.5,win = rec_win,opts=dict(title='gen real',width=300,height=300))
+            n=8
+            imgs= torch.cat([input[:n],rec[:n]])*0.5+0.5
+            save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_real.png".format(epoch,i)))  ,nrow=n)
         MSEerr = MSECriterion(rec,input)
-        
+
         VAEerr = KLD + MSEerr;
         VAEerr.backward()
         optimizerG.step()
@@ -342,7 +375,7 @@ for epoch in range(opt.niter):
         D_G_z2 = output.data.mean()
         optimizerG.step()
 
-        print('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+        log.info('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
                  VAEerr.data[0], errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
 
