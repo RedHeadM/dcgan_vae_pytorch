@@ -13,17 +13,19 @@ import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
-import visdom
-import logging
+import  logging
 from torch.autograd import Variable
 from torchtcn.utils.log import log,set_log_file
 from torchvision.utils import save_image
 from torchtcn.utils.dataset import (DoubleViewPairDataset,
                                     MultiViewVideoDataset, ViewPairDataset)
 from torchtcn.utils.comm import get_git_commit_hash,create_dir_if_not_exists
-vis = visdom.Visdom()
-vis.env = 'vae_dcgan'
-
+try:
+    import visdom
+    vis = visdom.Visdom()
+    vis.env = 'vae_dcgan'
+except ImportError:
+    vis = None
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
@@ -325,7 +327,9 @@ for epoch in range(opt.niter):
         noise.data.normal_(0, 1)
         gen = netG.decoder(noise)
         if i % opt.showimg ==0:
-            gen_win = vis.image(gen.data[0].cpu()*0.5+0.5,win = gen_win,opts=dict(title='gen fake',width=300,height=300),)
+
+            if vis is not None:
+                gen_win = vis.image(gen.data[0].cpu()*0.5+0.5,win = gen_win,opts=dict(title='gen fake',width=300,height=300),)
             n=8
             imgs= torch.cat([gen[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch,i)))  ,nrow=n)
@@ -352,7 +356,8 @@ for epoch in range(opt.niter):
         sampled = netG.sampler(encoded)
         rec = netG.decoder(sampled)
         if i %opt.showimg==0:
-            rec_win = vis.image(rec.data[0].cpu()*0.5+0.5,win = rec_win,opts=dict(title='gen real',width=300,height=300))
+            if vis is not None:
+                rec_win = vis.image(rec.data[0].cpu()*0.5+0.5,win = rec_win,opts=dict(title='gen real',width=300,height=300))
             n=8
             imgs= torch.cat([input[:n],rec[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_real.png".format(epoch,i)))  ,nrow=n)
