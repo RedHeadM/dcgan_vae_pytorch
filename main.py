@@ -15,6 +15,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
 import logging
+import sklearn.utils as sku
 from torch.autograd import Variable
 from torchtcn.utils.log import log,set_log_file
 from torchvision.utils import save_image
@@ -98,7 +99,7 @@ elif opt.dataset == 'cifar10':
                            ])
     )
 elif opt.dataset =='tcn':
-    opt.batchSize=opt.batchSize//2 #num views
+    # opt.batchSize=opt.batchSize//2 #num views
     transformer_train = transforms.Compose([
         transforms.ToPILImage(),
         transforms.Resize(IMAGE_SIZE[0]),  # TODO reize here Resize()
@@ -272,7 +273,9 @@ class _netD(nn.Module):
             self.main.add_module('pyramid{0}batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ndf * 2 ** (i+1)))
             self.main.add_module('pyramid{0}relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
 
-        self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1, 4, 1, 0, bias=False))
+        # self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1, 4, 1, 0, bias=False))
+        self.n_out =1
+        self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1*self.n_out, 4, 1, 0, bias=False))
         self.main.add_module('output-sigmoid', nn.Sigmoid())
 
 
@@ -281,8 +284,7 @@ class _netD(nn.Module):
             output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:
             output = self.main(input)
-
-        return output.view(-1, 1)
+        return output.view(-1, self.n_out)
 
 
 netD = _netD(opt.imageSize,ngpu)
@@ -372,10 +374,15 @@ for epoch in range(opt.niter):
         if opt.dataset !='tcn':
             real_cpu, _ = data
         else:
-            real_cpu = torch.cat([data[key_views[0]], data[key_views[1]]])
+            key_views=sku.shuffle(key_views)
+            # real_cpu = torch.cat([data[key_views[0]], data[key_views[1]]])
+            real_cpu = data[key_views[0]]
+
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
+
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
         batch_size = real_cpu.size(0)
+        print('batch_size: {}'.format(batch_size))
 
         # train with fake
         noise.data.resize_(batch_size, nz, 1, 1)
@@ -395,7 +402,7 @@ for epoch in range(opt.niter):
 
             if vis is not None:
                 gen_win = vis.image(gen.data[0].cpu()*0.5+0.5,win = gen_win,opts=dict(title='gen fake',width=300,height=300),)
-            n=8
+            n=min(batch_size,8)
             imgs= torch.cat([gen[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch,i)))  ,nrow=n)
             save_image(input_white_noise[:n]*0.5+0.5, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}input_white_noise.png".format(epoch,i)))  ,nrow=n)
@@ -411,6 +418,9 @@ for epoch in range(opt.niter):
         ############################
         # (2) Update G network: VAE
         ###########################
+        if opt.dataset =='tcn':
+            # use the other view
+            input.data.resize_(real_cpu.size()).copy_(data[key_views[1]])
 
         netG.zero_grad()
 
@@ -426,7 +436,6 @@ for epoch in range(opt.niter):
         if i %opt.showimg==0:
             if vis is not None:
                 rec_win = vis.image(rec.data[0].cpu()*0.5+0.5,win = rec_win,opts=dict(title='gen real',width=300,height=300))
-            n=8
             imgs= torch.cat([input[:n],rec[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_real.png".format(epoch,i)))  ,nrow=n)
         MSEerr = MSECriterion(rec,input)
