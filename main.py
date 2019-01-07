@@ -322,7 +322,8 @@ for epoch in range(opt.niter):
         # train with fake
         noise.data.resize_(batch_size, nz, 1, 1)
         noise.data.normal_(0, 1)
-        gen = netG.decoder(noise)
+        with torch.no_grad():
+            gen = netG.decoder(noise)
         gen=fake_buffer.push_and_pop(gen)
         input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *0.1)+0.5
         output = netD(input_white_noise)
