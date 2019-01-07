@@ -448,7 +448,7 @@ for epoch in range(opt.niter):
                 d_fake_data = netG(input)
             backup_D = netD.state_dict()
             backup_optimizerD = optimizerD.state_dict()
-            for i in range(unrolled_steps):
+            for  _ in range(unrolled_steps):
                 d_unrolled_loop(batch_size,d_fake_data)# with real or fake?
 
         if unrolled_steps > 0:
