@@ -22,6 +22,7 @@ from torchtcn.utils.dataset import (DoubleViewPairDataset,
                                     MultiViewVideoDataset, ViewPairDataset)
 from torchtcn.utils.comm import get_git_commit_hash,create_dir_if_not_exists
 from utils import ReplayBuffer
+from torch.nn import functional as F
 try:
     import visdom
     vis = visdom.Visdom()
@@ -52,6 +53,7 @@ parser.add_argument('--outf', default='/tmp/dc_gan', help='folder to output imag
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 
 opt = parser.parse_args()
+IMAGE_SIZE=(opt.imageSize,opt.imageSize)
 log.setLevel(logging.INFO)
 set_log_file(os.path.join(opt.outf, "train.log"))
 create_dir_if_not_exists(os.path.join(opt.outf, "images"))
@@ -99,7 +101,7 @@ elif opt.dataset =='tcn':
     opt.batchSize=opt.batchSize//2 #num views
     transformer_train = transforms.Compose([
         transforms.ToPILImage(),
-        transforms.Resize(64),  # TODO reize here Resize()
+        transforms.Resize(IMAGE_SIZE[0]),  # TODO reize here Resize()
         # transforms.RandomResizedCrop(IMAGE_SIZE[0], scale=(0.9, 1.0)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
@@ -110,7 +112,7 @@ elif opt.dataset =='tcn':
     shuffle = True
     # only one view pair in batch
     # sim_frames = 5
-    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,
+    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,get_edges=True,
                                                       number_views=2,
                                                       # std_similar_frame_margin_distribution=sim_frames,
                                                       transform_frames=transformer_train)
@@ -290,7 +292,7 @@ if opt.netD != '':
 log.info(str(netD))
 
 criterion = nn.BCELoss()
-MSECriterion = nn.MSELoss()
+# MSECriterion = nn.MSELoss()
 
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
@@ -303,7 +305,7 @@ if opt.cuda:
     netD.cuda()
     netG.make_cuda()
     criterion.cuda()
-    MSECriterion.cuda()
+    # MSECriterion.cuda()
     input, label = input.cuda(), label.cuda()
     noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
 
@@ -426,9 +428,18 @@ for epoch in range(opt.niter):
             n=8
             imgs= torch.cat([input[:n],rec[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_real.png".format(epoch,i)))  ,nrow=n)
-        MSEerr = MSECriterion(rec,input)
-
-        VAEerr = KLD + MSEerr;
+        # MSEerr = MSECriterion(rec,input)
+        key_views_edge = ["frames edge views {}".format(i) for i in range(2)]
+        data_edge = torch.cat([data[key_views_edge[0]], data[key_views_edge[1]]])
+        data_edge= data_edge*1./255. *10.+ 1.
+        if opt.cuda:
+            data_edge = data_edge.cuda()
+        num_pixels = IMAGE_SIZE[0] * IMAGE_SIZE[1]
+        recon_loss = F.binary_cross_entropy(rec.view(-1, num_pixels),
+                                            input.view(-1, num_pixels),
+                                            weight=data_edge.view(-1, num_pixels))
+        # VAEerr = KLD + MSEerr;
+        VAEerr = KLD + recon_loss
         VAEerr.backward(retain_graph=True)
         optimizerG.step()
 
