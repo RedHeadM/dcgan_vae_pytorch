@@ -334,7 +334,7 @@ def d_unrolled_loop(batch_size, d_fake_data):
         d_real_data, _ = d_real_data
     else:
         d_real_data = torch.cat([d_real_data[key_views[0]], d_real_data[key_views[1]]])
-    # d_real_data+= torch.randn(d_real_data.data.size()).cuda()*(0.5 *d_real_input_noise)+0.5
+    # d_real_data+= torch.randn(d_real_data.data.size()).cuda()*(0.5 *d_real_input_noise)
 
     if opt.cuda:
         d_real_data = d_real_data.cuda()
@@ -361,6 +361,7 @@ log.info('unrolled_steps: {}'.format(unrolled_steps))
 
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
+        print('i: {}'.format(i))
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
         ###########################
@@ -382,7 +383,7 @@ for epoch in range(opt.niter):
         gen=fake_buffer.push_and_pop(gen)
 
         # train real
-        input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *d_real_input_noise)+0.5
+        input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *d_real_input_noise)
         output = netD(input_white_noise)
         errD_real = criterion(output, label)
         errD_real.backward()
@@ -446,12 +447,14 @@ for epoch in range(opt.niter):
             with torch.no_grad():
                 d_fake_data = netG(input)
             backup_D = netD.state_dict()
+            backup_optimizerD = optimizerD.state_dict()
             for i in range(unrolled_steps):
                 d_unrolled_loop(batch_size,d_fake_data)# with real or fake?
 
         if unrolled_steps > 0:
             netD.load_state_dict(backup_D)
-            del backup_D
+            optimizerD.load_state_dict(backup_optimizerD)
+            del backup_D,backup_optimizerD
 
 
         rec = netG(input) # this tensor is freed from mem at this point
