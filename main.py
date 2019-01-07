@@ -112,7 +112,7 @@ elif opt.dataset =='tcn':
     shuffle = True
     # only one view pair in batch
     # sim_frames = 5
-    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,get_edges=True,
+    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,get_edges=False,
                                                       number_views=2,
                                                       # std_similar_frame_margin_distribution=sim_frames,
                                                       transform_frames=transformer_train)
@@ -293,6 +293,7 @@ log.info(str(netD))
 
 criterion = nn.BCELoss()
 # MSECriterion = nn.MSELoss()
+MSECriterion = nn.L1Loss()
 
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
@@ -305,7 +306,7 @@ if opt.cuda:
     netD.cuda()
     netG.make_cuda()
     criterion.cuda()
-    # MSECriterion.cuda()
+    MSECriterion.cuda()
     input, label = input.cuda(), label.cuda()
     noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
 
@@ -428,18 +429,9 @@ for epoch in range(opt.niter):
             n=8
             imgs= torch.cat([input[:n],rec[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}_gen_real.png".format(epoch,i)))  ,nrow=n)
-        # MSEerr = MSECriterion(rec,input)
-        key_views_edge = ["frames edge views {}".format(i) for i in range(2)]
-        data_edge = torch.cat([data[key_views_edge[0]], data[key_views_edge[1]]])
-        data_edge= data_edge*1./255. *10.+ 1.
-        if opt.cuda:
-            data_edge = data_edge.cuda()
-        num_pixels = IMAGE_SIZE[0] * IMAGE_SIZE[1]
-        recon_loss = F.binary_cross_entropy(rec.view(-1, num_pixels),
-                                            input.view(-1, num_pixels),
-                                            weight=data_edge.view(-1, num_pixels))
-        # VAEerr = KLD + MSEerr;
-        VAEerr = KLD + recon_loss
+        MSEerr = MSECriterion(rec,input)
+
+        VAEerr = KLD + MSEerr
         VAEerr.backward(retain_graph=True)
         optimizerG.step()
 
@@ -461,12 +453,6 @@ for epoch in range(opt.niter):
             for  _ in range(unrolled_steps):
                 d_unrolled_loop(batch_size,d_fake_data)# with real or fake?
 
-        if unrolled_steps > 0:
-            netD.load_state_dict(backup_D)
-            optimizerD.load_state_dict(backup_optimizerD)
-            del backup_D,backup_optimizerD
-
-
         rec = netG(input) # this tensor is freed from mem at this point
         output = netD(rec)
         errG = criterion(output, label)
@@ -474,6 +460,14 @@ for epoch in range(opt.niter):
         D_G_z2 = output.data.mean()
         [p.grad.data.clamp_(-5,5) for p in netG.decoder.parameters()]
         optimizerG.step()
+
+        if unrolled_steps > 0:
+            netD.load_state_dict(backup_D)
+            optimizerD.load_state_dict(backup_optimizerD)
+
+            del backup_D,backup_optimizerD
+
+
         ###########################
         log.info('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
