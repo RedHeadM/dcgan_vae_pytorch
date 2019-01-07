@@ -361,7 +361,6 @@ log.info('unrolled_steps: {}'.format(unrolled_steps))
 
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
-        print('i: {}'.format(i))
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
         ###########################
