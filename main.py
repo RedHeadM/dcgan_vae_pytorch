@@ -4,6 +4,7 @@ import os
 import random
 import math
 import torch
+import itertools
 import torch.nn as nn
 import torch.legacy.nn as lnn
 import torch.nn.parallel
@@ -25,7 +26,7 @@ try:
     import visdom
     vis = visdom.Visdom()
     vis.env = 'vae_dcgan'
-except ImportError:
+except (ImportError, AttributeError):
     vis = None
     print("visdom not used")
 
@@ -58,7 +59,7 @@ log.info("commit hash: {}".format(get_git_commit_hash(__file__)))
 
 if opt.manualSeed is None:
     opt.manualSeed = random.randint(1, 10000)
-log.info("Random Seed: ", opt.manualSeed)
+log.info("Random Seed: {}".format( opt.manualSeed))
 random.seed(opt.manualSeed)
 torch.manual_seed(opt.manualSeed)
 if opt.cuda:
@@ -113,9 +114,23 @@ elif opt.dataset =='tcn':
                                                       number_views=2,
                                                       # std_similar_frame_margin_distribution=sim_frames,
                                                       transform_frames=transformer_train)
+    dataset2 = DoubleViewPairDataset(vid_dir=opt.dataroot,
+                                                      number_views=2,
+                                                      # std_similar_frame_margin_distribution=sim_frames,
+                                                      transform_frames=transformer_train)
 assert dataset
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
                                          shuffle=True, num_workers=int(opt.workers))
+dataloader2 = torch.utils.data.DataLoader(dataset2, batch_size=opt.batchSize,
+                                         shuffle=True, num_workers=int(opt.workers))
+
+
+def cycle(iterable):
+    while True:
+        for x in iterable:
+            yield x
+#Using itertools.cycle has an important drawback, in that it does not shuffle the data after each iteration:
+iter_data=iter(cycle(dataloader2))# WARNING  itertools.cycle  does not shuffle the data after each iteratio
 
 ngpu = int(opt.ngpu)
 nz = int(opt.nz)
@@ -305,6 +320,45 @@ fake_buffer = ReplayBuffer()
 gen_win = None
 rec_win = None
 key_views = ["frames views {}".format(i) for i in range(2)]
+
+d_real_input_noise =0.1
+
+def d_unrolled_loop(batch_size, d_fake_data):
+    # 1. Train D on real+fake
+    optimizerD.zero_grad()
+
+    #  1A: Train D on real
+    d_real_data = next(iter_data) #dataloader.sample(batch_size)#TODO
+
+    if opt.dataset !='tcn':
+        d_real_data, _ = d_real_data
+    else:
+        d_real_data = torch.cat([d_real_data[key_views[0]], d_real_data[key_views[1]]])
+    # d_real_data+= torch.randn(d_real_data.data.size()).cuda()*(0.5 *d_real_input_noise)+0.5
+
+    if opt.cuda:
+        d_real_data = d_real_data.cuda()
+    d_real_decision = netD(d_real_data)
+    target = torch.ones_like(d_real_decision)
+    if opt.cuda:
+        target = target.cuda()
+    d_real_error = criterion(d_real_decision, target)  # ones = true
+
+    #  1B: Train D on fake
+    d_fake_decision = netD(d_fake_data)
+    target = torch.zeros_like(d_fake_decision)
+    if opt.cuda:
+        target = target.cuda()
+    d_fake_error = criterion(d_fake_decision, target)  # zeros = fake
+
+    d_loss = d_real_error + d_fake_error
+    d_loss.backward(create_graph=True)
+    optimizerD.step()     # Only optimizes D's parameters; changes based on stored gradients from backward()
+
+
+unrolled_steps=10
+log.info('unrolled_steps: {}'.format(unrolled_steps))
+
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
         ############################
@@ -319,13 +373,16 @@ for epoch in range(opt.niter):
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
         batch_size = real_cpu.size(0)
+
         # train with fake
         noise.data.resize_(batch_size, nz, 1, 1)
         noise.data.normal_(0, 1)
         with torch.no_grad():
             gen = netG.decoder(noise)
         gen=fake_buffer.push_and_pop(gen)
-        input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *0.1)+0.5
+
+        # train real
+        input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *d_real_input_noise)+0.5
         output = netD(input_white_noise)
         errD_real = criterion(output, label)
         errD_real.backward()
@@ -378,8 +435,24 @@ for epoch in range(opt.niter):
         ############################
         # (3) Update G network: maximize log(D(G(z)))
         ###########################
+        netG.zero_grad() #correct?
 
         label.data.fill_(real_label)  # fake labels are real for generator cost
+#         noise.data.resize_(batch_size, nz, 1, 1)
+        # noise.data.normal_(0, 1)
+
+        # unroll setp
+        if unrolled_steps > 0:
+            with torch.no_grad():
+                d_fake_data = netG(input)
+            backup_D = netD.state_dict()
+            for i in range(unrolled_steps):
+                d_unrolled_loop(batch_size,d_fake_data)# with real or fake?
+
+        if unrolled_steps > 0:
+            netD.load_state_dict(backup_D)
+            del backup_D
+
 
         rec = netG(input) # this tensor is freed from mem at this point
         output = netD(rec)
