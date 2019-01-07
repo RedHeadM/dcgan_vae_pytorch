@@ -113,7 +113,7 @@ elif opt.dataset =='tcn':
     shuffle = True
     # only one view pair in batch
     # sim_frames = 5
-    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,get_edges=False,
+    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,
                                                       number_views=2,
                                                       # std_similar_frame_margin_distribution=sim_frames,
                                                       transform_frames=transformer_train)
