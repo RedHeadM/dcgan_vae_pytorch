@@ -298,7 +298,7 @@ class _netD(nn.Module):
 
 
 
-unrolled_steps=0
+unrolled_steps=2
 log.info('unrolled_steps: {}'.format(unrolled_steps))
 use_lables =True
 log.info('use_lables: {}'.format(use_lables))
@@ -307,7 +307,7 @@ if opt.dataset =='tcn' and use_lables:
     max_len_vid = max(max(l) for l in dataset.frame_lengths)
     mean_len_mean = np.mean(np.mean(dataset.frame_lengths))
     # add a lable for n frames
-    lable_n_frames=10
+    lable_n_frames=20
     lable_frame_look_up=[]
     for i in range(max_len_vid):
         if i%lable_n_frames ==0 and i!=0 and i< mean_len_mean:
@@ -374,14 +374,14 @@ def d_unrolled_loop(batch_size, d_fake_data):
 
     if opt.cuda:
         d_real_data = d_real_data.cuda()
-    d_real_decision = netD(d_real_data)
+    d_real_decision,_ = netD(d_real_data)
     target = torch.ones_like(d_real_decision)
     if opt.cuda:
         target = target.cuda()
 
     d_real_error = criterion(d_real_decision, target)  # ones = true
     #  1B: Train D on fake
-    d_fake_decision = netD(d_fake_data)
+    d_fake_decision,_ = netD(d_fake_data)
     target = torch.zeros_like(d_fake_decision)
     if opt.cuda:
         target = target.cuda()
