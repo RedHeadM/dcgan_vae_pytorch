@@ -4,6 +4,7 @@ import os
 import random
 import math
 import torch
+import numpy as np
 import itertools
 import torch.nn as nn
 import torch.legacy.nn as lnn
@@ -122,9 +123,9 @@ elif opt.dataset =='tcn':
                                                       # std_similar_frame_margin_distribution=sim_frames,
                                                       transform_frames=transformer_train)
 assert dataset
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,pin_memory=opt.cuda,
                                          shuffle=True, num_workers=int(opt.workers))
-dataloader2 = torch.utils.data.DataLoader(dataset2, batch_size=opt.batchSize,
+dataloader2 = torch.utils.data.DataLoader(dataset2, batch_size=opt.batchSize,pin_memory=opt.cuda,
                                          shuffle=True, num_workers=int(opt.workers))
 
 
@@ -191,7 +192,8 @@ class _Encoder(nn.Module):
             self.encoder.add_module('pyramid{0}-{1}conv'.format(ngf*2**i, ngf * 2**(i+1)), nn.Conv2d(ngf*2**(i), ngf * 2**(i+1), 4, 2, 1, bias=False))
             self.encoder.add_module('pyramid{0}batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ngf * 2**(i+1)))
             self.encoder.add_module('pyramid{0}relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
-
+            if i != n-4:
+                self.encoder.add_module('dropout'.format(ngf * 2**(i-1)), nn.Dropout(p=0.5))
         # state size. (ngf*8) x 4 x 4
 
     def forward(self,input):
@@ -224,6 +226,7 @@ class _netG(nn.Module):
             self.decoder.add_module('pyramid{0}-{1}conv'.format(ngf*2**i, ngf * 2**(i-1)),nn.ConvTranspose2d(ngf * 2**i, ngf * 2**(i-1), 4, 2, 1, bias=False))
             self.decoder.add_module('pyramid{0}batchnorm'.format(ngf * 2**(i-1)), nn.BatchNorm2d(ngf * 2**(i-1)))
             self.decoder.add_module('pyramid{0}relu'.format(ngf * 2**(i-1)), nn.LeakyReLU(0.2, inplace=True))
+            self.decoder.add_module('pyramid{0}dropout'.format(ngf * 2**(i-1)), nn.Dropout(p=0.5))
 
         self.decoder.add_module('ouput-conv', nn.ConvTranspose2d(    ngf,      nc, 4, 2, 1, bias=False))
         self.decoder.add_module('output-tanh', nn.Tanh())
@@ -253,7 +256,7 @@ log.info(str(netG))
 
 
 class _netD(nn.Module):
-    def __init__(self, imageSize, ngpu):
+    def __init__(self, imageSize, ngpu,n_lables=0):
         super(_netD, self).__init__()
         self.ngpu = ngpu
         n = math.log2(imageSize)
@@ -274,20 +277,48 @@ class _netD(nn.Module):
             self.main.add_module('pyramid{0}relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
 
         # self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1, 4, 1, 0, bias=False))
-        self.n_out =1
+        self.n_out =1+n_lables
+        self.n_lables=n_lables
         self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1*self.n_out, 4, 1, 0, bias=False))
-        self.main.add_module('output-sigmoid', nn.Sigmoid())
-
+        self.fakeout_sigmoid=nn.Sigmoid()
+#         if self.n_lables:
+            # self.lable_softmax=nn.Softmax()
 
     def forward(self, input):
         if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
             output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:
             output = self.main(input)
-        return output.view(-1, self.n_out)
+        output= output.view(-1, self.n_out)
+        if self.n_lables:
+            return self.fakeout_sigmoid(output[:,0]),output[:,1:self.n_out]
+        else:
+            return self.fakeout_sigmoid(output),None
 
 
-netD = _netD(opt.imageSize,ngpu)
+
+
+unrolled_steps=0
+log.info('unrolled_steps: {}'.format(unrolled_steps))
+use_lables =True
+log.info('use_lables: {}'.format(use_lables))
+lable_cnt= 0
+if opt.dataset =='tcn' and use_lables:
+    max_len_vid = max(max(l) for l in dataset.frame_lengths)
+    mean_len_mean = np.mean(np.mean(dataset.frame_lengths))
+    # add a lable for n frames
+    lable_n_frames=10
+    lable_frame_look_up=[]
+    for i in range(max_len_vid):
+        if i%lable_n_frames ==0 and i!=0 and i< mean_len_mean:
+            lable_cnt+=1
+        lable_frame_look_up.append(lable_cnt)
+    lable_cnt =np.max(lable_cnt)+1
+    c_criterion = nn.CrossEntropyLoss().cuda()
+    log.info('lable_cnt: {}'.format(lable_cnt))
+    assert lable_cnt
+
+netD = _netD(opt.imageSize,ngpu,n_lables=lable_cnt)
 netD.apply(weights_init)
 if opt.netD != '':
     netD.load_state_dict(torch.load(opt.netD))
@@ -347,8 +378,8 @@ def d_unrolled_loop(batch_size, d_fake_data):
     target = torch.ones_like(d_real_decision)
     if opt.cuda:
         target = target.cuda()
-    d_real_error = criterion(d_real_decision, target)  # ones = true
 
+    d_real_error = criterion(d_real_decision, target)  # ones = true
     #  1B: Train D on fake
     d_fake_decision = netD(d_fake_data)
     target = torch.zeros_like(d_fake_decision)
@@ -360,10 +391,7 @@ def d_unrolled_loop(batch_size, d_fake_data):
     d_loss.backward(create_graph=True)
     optimizerD.step()     # Only optimizes D's parameters; changes based on stored gradients from backward()
 
-
-unrolled_steps=10
-log.info('unrolled_steps: {}'.format(unrolled_steps))
-
+errD_class=0.
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
         ############################
@@ -372,34 +400,44 @@ for epoch in range(opt.niter):
         netD.zero_grad()
         # train with real
         if opt.dataset !='tcn':
-            real_cpu, _ = data
+            real_cpu, lable_c_real = data
         else:
             key_views=sku.shuffle(key_views)
             # real_cpu = torch.cat([data[key_views[0]], data[key_views[1]]])
             real_cpu = data[key_views[0]]
 
+        batch_size = real_cpu.size(0)
+        if lable_cnt:
+            lables_c=[lable_frame_look_up[frame] for frame in data["frame index"].numpy()]
+            lables_c=torch.tensor(lables_c,dtype=torch.long).cuda()
+            lables_c_fake = torch.tensor(np.random.randint(0, lable_cnt, batch_size),dtype=torch.long).cuda()
+
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
 
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
-        batch_size = real_cpu.size(0)
-        print('batch_size: {}'.format(batch_size))
 
         # train with fake
         noise.data.resize_(batch_size, nz, 1, 1)
-        noise.data.normal_(0, 1)
+        # TODO checjk if adding mu makes is better
+        noise.data.normal_(0, 1)+torch.tensor(np.random.uniform(0,1,batch_size),dtype=torch.float32).cuda()
         with torch.no_grad():
+            #encode the owther view
             gen = netG.decoder(noise)
         gen=fake_buffer.push_and_pop(gen)
 
         # train real
         input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 *d_real_input_noise)
-        output = netD(input_white_noise)
-        errD_real = criterion(output, label)
+        output_f,output_c = netD(input_white_noise)
+        errD_real = criterion(output_f, label)
+        if lable_cnt:
+            # lables_c= torch.zeros_like(lables_c,dtype=torch.long)+1
+            assert output_c.requires_grad
+            errD_C_real = c_criterion(output_c, lables_c)
+            errD_real+=errD_C_real
         errD_real.backward()
-        D_x = output.data.mean()
+        D_x = output_f.data.mean()
 
         if i % opt.showimg ==0:
-
             if vis is not None:
                 gen_win = vis.image(gen.data[0].cpu()*0.5+0.5,win = gen_win,opts=dict(title='gen fake',width=300,height=300),)
             n=min(batch_size,8)
@@ -408,11 +446,17 @@ for epoch in range(opt.niter):
             save_image(input_white_noise[:n]*0.5+0.5, os.path.expanduser(os.path.join(opt.outf, "images/ep{}_step{}input_white_noise.png".format(epoch,i)))  ,nrow=n)
         label.data.fill_(fake_label)
 
-        output = netD(gen.detach())
-        errD_fake = criterion(output, label)
+        output_f, output_c = netD(gen.detach())
+        errD_fake = criterion(output_f, label)
+        if lable_cnt:
+            assert output_c.requires_grad
+            errD_C_fake =c_criterion(output_c, lables_c_fake)
+            errD_fake+=errD_C_fake
         errD_fake.backward()
-        D_G_z1 = output.data.mean()
+        D_G_z1 = output_f.data.mean()
         errD = errD_real + errD_fake
+        if lable_cnt:
+            errD_class = errD_C_fake + errD_C_real
         [p.grad.data.clamp_(-5,5) for p in netD.parameters()]
         optimizerD.step()
         ############################
@@ -463,10 +507,10 @@ for epoch in range(opt.niter):
                 d_unrolled_loop(batch_size,d_fake_data)# with real or fake?
 
         rec = netG(input) # this tensor is freed from mem at this point
-        output = netD(rec)
-        errG = criterion(output, label)
+        output_f,_ = netD(rec)
+        errG = criterion(output_f, label)
         errG.backward(retain_graph=True)
-        D_G_z2 = output.data.mean()
+        D_G_z2 = output_f.data.mean()
         [p.grad.data.clamp_(-5,5) for p in netG.decoder.parameters()]
         optimizerG.step()
 
@@ -478,9 +522,9 @@ for epoch in range(opt.niter):
 
 
         ###########################
-        log.info('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+        log.info('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f,class_D %.4f,, Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
-                 VAEerr.data[0], errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
+                 VAEerr.data[0], errD.data[0],errD_class.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
 
     if epoch%opt.saveInt == 0 and epoch!=0:
         torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, epoch))
