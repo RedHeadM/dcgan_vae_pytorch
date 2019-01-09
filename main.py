@@ -419,7 +419,7 @@ for epoch in range(opt.niter):
         # train with fake
         noise.data.resize_(batch_size, nz, 1, 1)
         # TODO checjk if adding mu makes is better
-        noise.data.normal_(0, 1)+torch.tensor(np.random.uniform(0,1,batch_size),dtype=torch.float32).cuda()
+        noise.data.normal_(0, 1)
         with torch.no_grad():
             #encode the owther view
             gen = netG.decoder(noise)
