@@ -288,7 +288,6 @@ class _netD(nn.Module):
             output = self.main(input)
         labels_out = []
         for lout, nout_l in zip(self.cov_out_labels, self.n_lables):
-            print("lout", lout)
             labels_out.append(lout(output).view(-1, nout_l))
         out_fake_real = self.fakeout_sigmoid(self.cov_out_fake_real(output)).view(-1, 1)
         return out_fake_real, labels_out
@@ -432,7 +431,7 @@ for step in range(int(opt.niter)):
 
     loss = lambda_cyc * gan_loss + lambda_id * (kl+id_loss)
 
-    if i % opt.showimg == 0:
+    if step % opt.showimg == 0:
         save_2imgs([real_view_0, decoded_fake_view_0], "view0", step, 8)
         save_2imgs([real_view_1, decoded_fake_view_1], "view1", step, 8)
     loss.backward()
