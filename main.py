@@ -321,7 +321,7 @@ class _netD(nn.Module):
             return self.fakeout_sigmoid(output), None
 
 
-unrolled_steps = 2
+unrolled_steps = 0
 log.info('unrolled_steps: {}'.format(unrolled_steps))
 use_lables = True
 log.info('use_lables: {}'.format(use_lables))
