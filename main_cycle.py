@@ -293,8 +293,6 @@ class _netD(nn.Module):
         return out_fake_real, labels_out
 
 
-unrolled_steps = 0
-log.info('unrolled_steps: {}'.format(unrolled_steps))
 use_lables = True
 log.info('use_lables: {}'.format(use_lables))
 lable_cnt = 0
@@ -415,7 +413,6 @@ for step in range(int(opt.niter)):
     batch_size = real_view_0.size(0)
     label_valid = Variable(torch.Tensor(np.ones((batch_size,))), requires_grad=False).cuda()
     label_fake = Variable(torch.Tensor(np.zeros((batch_size,))), requires_grad=False).cuda()
-    print("real_view_0", real_view_0.type())
     encoded_view_0 = netG.encoder(real_view_0)
     # TODO add cam as input for decoder
     decoded_fake_view_1 = netG.decoder(netG.sampler(encoded_view_0))
