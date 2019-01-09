@@ -286,11 +286,12 @@ class _netD(nn.Module):
             output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
         else:
             output = self.main(input)
-        output = output.view(-1, self.n_out)
         labels_out = []
-        if lout in self.cov_out_labels:
-            labels_out.append(lout(output))
-        return self.fakeout_sigmoid(self.cov_out_fake_real(output[:, 0])), labels_out
+        for lout, nout_l in zip(self.cov_out_labels, self.n_lables):
+            print("lout", lout)
+            labels_out.append(lout(output).view(-1, nout_l))
+        out_fake_real = self.fakeout_sigmoid(self.cov_out_fake_real(output)).view(-1, 1)
+        return out_fake_real, labels_out
 
 
 unrolled_steps = 0
@@ -368,6 +369,8 @@ log.info(str(netD))
 optimizerD = optim.Adam(netD.parameters(), lr=opt.d_lr, betas=(opt.beta1, opt.beta2))
 optimizerG = optim.Adam(netG.parameters(), lr=opt.g_lr, betas=(opt.beta1, opt.beta2))
 # Buffers of previously generated samples
+netD.cuda()
+netG.cuda()
 
 
 def get_cam_labels(data):
@@ -413,11 +416,11 @@ for step in range(int(opt.niter)):
     batch_size = real_view_0.size(0)
     label_valid = Variable(torch.Tensor(np.ones((batch_size,))), requires_grad=False).cuda()
     label_fake = Variable(torch.Tensor(np.zeros((batch_size,))), requires_grad=False).cuda()
-
+    print("real_view_0", real_view_0.type())
     encoded_view_0 = netG.encoder(real_view_0)
     # TODO add cam as input for decoder
     decoded_fake_view_1 = netG.decoder(netG.sampler(encoded_view_0))
-    encoded_view_1 = netG.encoder(fake_view_1)
+    encoded_view_1 = netG.encoder(decoded_fake_view_1)
     # back to view 0
     decoded_fake_view_0 = netG.decoder(netG.sampler(encoded_view_1))
     # loss
