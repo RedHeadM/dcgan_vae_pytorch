@@ -424,13 +424,13 @@ for step in range(int(opt.niter)):
     # back to view 0
     decoded_fake_view_0 = netG.decoder(netG.sampler(encoded_view_1))
     # loss
-    kl_loss = (kl_loss(encoded_view_0)+kl_loss(encoded_view_1))/2.
+    kl = (kl_loss(encoded_view_0)+kl_loss(encoded_view_1))/2.
     id_loss = (criterion_id(decoded_fake_view_0, real_view_0) +
                criterion_id(decoded_fake_view_1, real_view_1))/2.
     gan_loss = (criterion_GAN(netD(decoded_fake_view_0)[0], label_valid)
                 + criterion_GAN(netD(decoded_fake_view_1)[0], label_valid))/2.
 
-    loss = lambda_cyc * gan_loss + lambda_id * (kl_loss+id_loss)
+    loss = lambda_cyc * gan_loss + lambda_id * (kl+id_loss)
 
     if i % opt.showimg == 0:
         save_2imgs([real_view_0, decoded_fake_view_0], "view0", step, 8)
@@ -459,7 +459,7 @@ for step in range(int(opt.niter)):
 
     loss_D.backward()
     optimizerD.step()
-
-    if step % opt.saveInt == 0 and step != 0:
-        torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, step))
-        torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.outf, step))
+    #
+    # if step % opt.saveInt == 0 and step != 0:
+    #     torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, step))
+    #     torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.outf, step))
