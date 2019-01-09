@@ -411,8 +411,8 @@ for step in range(int(opt.niter)):
     real_view_1 = Variable(data[key_views[1]], requires_grad=False).cuda()
     # r/f lables: Adversarial ground truths
     batch_size = real_view_0.size(0)
-    label_valid = Variable(Tensor(np.ones((batch_size,))), requires_grad=False).cuda()
-    label_fake = Variable(Tensor(np.zeros((batch_size,))), requires_grad=False).cuda()
+    label_valid = Variable(torch.Tensor(np.ones((batch_size,))), requires_grad=False).cuda()
+    label_fake = Variable(torch.Tensor(np.zeros((batch_size,))), requires_grad=False).cuda()
 
     encoded_view_0 = netG.encoder(real_view_0)
     # TODO add cam as input for decoder
