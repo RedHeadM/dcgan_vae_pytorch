@@ -55,10 +55,10 @@ def create_lable_func(min_val, max_val, n_bins):
     yhot = le_one_hot.transform(x_fit)
 
     def _enc_lables(data):
-        fit = data.cup().numpy() if isinstance(data, torch.Tensor) else data
+        fit = data.cpu().numpy() if isinstance(data, torch.Tensor) else data
         return le.transform(np.digitize(fit, bins))
 
     def _enc_lables_hot(data):
-        fit = data.cup().numpy() if isinstance(data, torch.Tensor) else data
-        return le.transform(np.digitize(fit, bins))
-    return _enc_lables, _enc_lables
+        fit = data.cpu().numpy() if isinstance(data, torch.Tensor) else data
+        return le_one_hot.transform(np.digitize(fit, bins))
+    return _enc_lables, _enc_lables_hot

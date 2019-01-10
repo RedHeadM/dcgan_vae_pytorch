@@ -324,8 +324,6 @@ rec_win = None
 key_views = ["frames views {}".format(i) for i in range(num_views)]
 
 lable_keys_cam_view_info = []  # list with keys for view 0 and view 1
-
-#
 for view_i in range(num_views):
     lable_keys_cam_view_info.append(["cam_pitch_view_{}".format(view_i),
                                      "cam_yaw_view_{}".format(view_i),
@@ -411,8 +409,8 @@ for step in range(int(opt.niter)):
     real_view_1 = Variable(data[key_views[1]], requires_grad=False).cuda()
     # r/f lables: Adversarial ground truths
     batch_size = real_view_0.size(0)
-    label_valid = Variable(torch.Tensor(np.ones((batch_size,))), requires_grad=False).cuda()
-    label_fake = Variable(torch.Tensor(np.zeros((batch_size,))), requires_grad=False).cuda()
+    label_valid = Variable(torch.Tensor(np.zeros((batch_size,))), requires_grad=False).cuda()
+    label_fake = Variable(torch.Tensor(np.ones((batch_size,))), requires_grad=False).cuda()
     encoded_view_0 = netG.encoder(real_view_0)
     # TODO add cam as input for decoder
     decoded_fake_view_1 = netG.decoder(netG.sampler(encoded_view_0))
@@ -426,7 +424,7 @@ for step in range(int(opt.niter)):
     gan_loss = (criterion_GAN(netD(decoded_fake_view_0)[0], label_valid)
                 + criterion_GAN(netD(decoded_fake_view_1)[0], label_valid))/2.
 
-    loss = lambda_cyc * gan_loss + lambda_id * (kl+id_loss)
+    loss = lambda_cyc * gan_loss #+ lambda_id * (kl+id_loss)
 
     if step % opt.showimg == 0:
         save_2imgs([real_view_0, decoded_fake_view_0], "view0", step, 8)
@@ -448,13 +446,19 @@ for step in range(int(opt.niter)):
     # Fake loss (on batch of previously generated samples)
     fake_img = torch.cat([decoded_fake_view_0, decoded_fake_view_1])
     fake_img = fake_buffer.push_and_pop(fake_img)
-    loss_fake = criterion_GAN(netD(fake_img.detach())[0], torch.cat([label_fake, label_fake]))
+    d_out_fake = netD(fake_img.detach())[0]
+    loss_fake = criterion_GAN(d_out_fake, torch.cat([label_fake, label_fake]))
 
     # Total loss
     loss_D = (loss_real + loss_fake) / 2
 
     loss_D.backward()
     optimizerD.step()
+
+    log.info('[%d/%d] Loss_D: %.4f, Loss_id: %.4f, D(fake)%.1f, cyclegan %.4f'
+             % (step, opt.niter,
+                loss_D.data[0], id_loss.data[0], d_out_fake.data[0], gan_loss.data[0]))
+
     #
     # if step % opt.saveInt == 0 and step != 0:
     #     torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, step))
