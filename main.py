@@ -264,7 +264,7 @@ class _netG(nn.Module):
                 ngf * 2**(i-1)), nn.BatchNorm2d(ngf * 2**(i-1)))
             self.decoder.add_module('pyramid{0}relu'.format(
                 ngf * 2**(i-1)), nn.LeakyReLU(0.2, inplace=True))
-            # self.decoder.add_module('pyramid{0}dropout'.format(ngf * 2**(i-1)), nn.Dropout(p=0.5))
+            self.decoder.add_module('pyramid{0}dropout'.format(ngf * 2**(i-1)), nn.Dropout(p=0.5))
 
         self.decoder.add_module(
             'ouput-conv', nn.ConvTranspose2d(ngf,nc, 4, 2, 1, bias=False))
@@ -351,12 +351,14 @@ log.info('unrolled_steps: {}'.format(unrolled_steps))
 use_lables = True
 log.info('use_lables: {}'.format(use_lables))
 
-criterion_c = nn.CrossEntropyLoss().cuda()
 
 
+#gan loss
 criterion = nn.BCELoss()
-# MSECriterion = nn.MSELoss()
-MSECriterion = nn.L1Loss()
+# criterion = nn.MSELoss()# lsgan loss
+MSECriterion = nn.MSELoss()
+# MSECriterion = nn.L1Loss()
+criterion_c = nn.CrossEntropyLoss().cuda()
 
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
 noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
@@ -374,6 +376,11 @@ key_views = ["frames views {}".format(i) for i in range(2)]
 
 d_real_input_noise = 0.1
 
+def to_var( x):
+    """Converts numpy to variable."""
+    if opt.cuda:
+        x = x.cuda()
+    return Variable(x,requires_grad=True)
 
 def d_unrolled_loop(batch_size, d_fake_data):
     # 1. Train D on real+fake
@@ -425,7 +432,7 @@ for cam_info_view in lable_keys_cam_view_info:
     for cam_inf in cam_info_view:
         if "pitch" in cam_inf:
             min_val, max_val = -50, -35.
-            n_bins = 10
+            n_bins = 15
         elif "yaw" in cam_inf:
             min_val, max_val = -60., 210.
             n_bins = 20
@@ -524,8 +531,11 @@ for epoch in range(opt.niter):
         input_white_noise= input + torch.randn(input.data.size()).cuda()*(0.5 * d_real_input_noise)
         output_f, output_c= netD(input_white_noise)
         errD_real= criterion(output_f, label.view(batch_size,1))
+        loss_lables_real = 0
         for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
-            errD_real += criterion_c(out, label_c[key_l])
+            l_c = criterion_c(out, label_c[key_l])
+            loss_lables_real+=l_c
+            errD_real+=l_c
         errD_real.backward()
         D_x= output_f.data.mean()
 
@@ -543,8 +553,8 @@ for epoch in range(opt.niter):
 
         output_f, output_c= netD(gen.detach())
         errD_fake= criterion(output_f, label.view(batch_size,1))
-        for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
-            errD_fake += criterion_c(out, label_c[key_l])
+     #    for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
+            # errD_fake += criterion_c(out, label_c[key_l])
 
         errD_fake.backward()
         D_G_z1= output_f.data.mean()
@@ -554,9 +564,7 @@ for epoch in range(opt.niter):
         ############################
         # (2) Update G network: VAE
         ###########################
-        if opt.dataset == 'tcn':
-            # use the other view
-            input.data.resize_(real_cpu.size()).copy_(data[key_views[1]])
+        input.data.resize_(real_cpu.size()).copy_(data[key_views[1]])
 
         netG.zero_grad()
 
@@ -616,7 +624,7 @@ for epoch in range(opt.niter):
 
         errG.backward(retain_graph=True)
         D_G_z2= output_f.data.mean()
-        [p.grad.data.clamp_(-5, 5) for p in netG.decoder.parameters()]
+        # [p.grad.data.clamp_(-5, 5) for p in netG.decoder.parameters()]
         optimizerG.step()
 
         if unrolled_steps > 0:
