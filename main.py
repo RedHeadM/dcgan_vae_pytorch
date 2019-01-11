@@ -515,14 +515,19 @@ for epoch in range(opt.niter):
 
         # train with fake
         # TODO checjk if adding mu makes is better
-        noise.data.resize_(batch_size, nz)
-        noise.data.normal_(0, 1)
+        # noise.data.resize_(batch_size, nz)
+        # noise.data.normal_(0, 1)
         d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[0]]
         d.append(noise)
         input_d = torch.cat(d, dim=1)
         input_d.data.resize_(batch_size, nz+sum(n_classes), 1, 1)
 
         with torch.no_grad():
+            sampled= netG.sampler(netG.encoder(input))
+            d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[0]]
+            d.append(sampled)
+            input_d = torch.cat(d, dim=1)
+            input_d.data.resize_(batch_size, nz+sum(n_classes), 1, 1)
             # encode the owther view
             gen= netG.decoder(input_d)
 
@@ -553,8 +558,8 @@ for epoch in range(opt.niter):
 
         output_f, output_c= netD(gen.detach())
         errD_fake= criterion(output_f, label.view(batch_size,1))
-     #    for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
-            # errD_fake += criterion_c(out, label_c[key_l])
+        for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
+            errD_fake += criterion_c(out, label_c[key_l])
 
         errD_fake.backward()
         D_G_z1= output_f.data.mean()
