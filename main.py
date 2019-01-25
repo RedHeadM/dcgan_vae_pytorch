@@ -7,6 +7,7 @@ import math
 import os
 import random
 from collections import OrderedDict
+
 import numpy as np
 
 import sklearn.utils as sku
@@ -139,7 +140,7 @@ elif opt.dataset == 'tcn':
     shuffle = True
     # only one view pair in batch
     # sim_frames = 5
-    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot,add_camera_info=True,
+    dataset = DoubleViewPairDataset(vid_dir=opt.dataroot, add_camera_info=True,
                                     number_views=2,
                                     # std_similar_frame_margin_distribution=sim_frames,
                                     transform_frames=transformer_train)
@@ -235,7 +236,7 @@ class _Encoder(nn.Module):
 
 
 class _netG(nn.Module):
-    def __init__(self, imageSize, ngpu,nz_out):
+    def __init__(self, imageSize, ngpu, nz_out):
         super(_netG, self).__init__()
         self.ngpu = ngpu
         self.encoder = _Encoder(imageSize)
@@ -267,7 +268,7 @@ class _netG(nn.Module):
             self.decoder.add_module('pyramid{0}dropout'.format(ngf * 2**(i-1)), nn.Dropout(p=0.5))
 
         self.decoder.add_module(
-            'ouput-conv', nn.ConvTranspose2d(ngf,nc, 4, 2, 1, bias=False))
+            'ouput-conv', nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False))
         self.decoder.add_module('output-tanh', nn.Tanh())
 
     def forward(self, input):
@@ -288,7 +289,6 @@ class _netG(nn.Module):
         self.encoder.cuda()
         self.sampler.cuda()
         self.decoder.cuda()
-
 
 
 class _netD(nn.Module):
@@ -352,12 +352,11 @@ use_lables = True
 log.info('use_lables: {}'.format(use_lables))
 
 
-
-#gan loss
+# gan loss
 criterion = nn.BCELoss()
 # criterion = nn.MSELoss()# lsgan loss
-MSECriterion = nn.MSELoss()
-# MSECriterion = nn.L1Loss()
+# MSECriterion = nn.MSELoss()
+MSECriterion = nn.L1Loss()
 criterion_c = nn.CrossEntropyLoss().cuda()
 
 input = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
@@ -376,11 +375,13 @@ key_views = ["frames views {}".format(i) for i in range(2)]
 
 d_real_input_noise = 0.1
 
-def to_var( x):
+
+def to_var(x):
     """Converts numpy to variable."""
     if opt.cuda:
         x = x.cuda()
-    return Variable(x,requires_grad=True)
+    return Variable(x, requires_grad=True)
+
 
 def d_unrolled_loop(batch_size, d_fake_data):
     # 1. Train D on real+fake
@@ -427,7 +428,7 @@ for view_i in range(num_views):
 mapping_cam_info_lable = OrderedDict()
 mapping_cam_info_one_hot = OrderedDict()
 # create a different mapping for echt setting
-n_classes=[]
+n_classes = []
 for cam_info_view in lable_keys_cam_view_info:
     for cam_inf in cam_info_view:
         if "pitch" in cam_inf:
@@ -456,8 +457,7 @@ if opt.netD != '':
 log.info(str(netD))
 
 
-
-netG = _netG(opt.imageSize, ngpu,nz+sum(n_classes))
+netG = _netG(opt.imageSize, ngpu, nz+sum(n_classes))
 netG.apply(weights_init)
 if opt.netG != '':
     netG.load_state_dict(torch.load(opt.netG))
@@ -484,13 +484,14 @@ optimizerG = optim.Adam(netG.parameters(), lr=opt.g_lr,
                         betas=(opt.beta1, opt.beta2))
 
 
-errD_class = 0.
+netD.train()
+netG.train()
 for epoch in range(opt.niter):
     for i, data in enumerate(dataloader, 0):
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
         ###########################
-        netD.zero_grad()
+        optimizerD.zero_grad()
         # train with real
         if opt.dataset != 'tcn':
             real_cpu, lable_c_real = data
@@ -507,7 +508,7 @@ for epoch in range(opt.niter):
                 # contin cam values to labels
                 label_c[key_l] = torch.tensor(lable_func(data[key_l])).cuda()
                 label_c_hot_in[key_l] = torch.tensor(
-                    mapping_cam_info_one_hot[key_l](data[key_l]),dtype=torch.float32).cuda()
+                    mapping_cam_info_one_hot[key_l](data[key_l]), dtype=torch.float32).cuda()
 
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
 
@@ -515,55 +516,55 @@ for epoch in range(opt.niter):
 
         # train with fake
         # TODO checjk if adding mu makes is better
-        # noise.data.resize_(batch_size, nz)
-        # noise.data.normal_(0, 1)
-        d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[0]]
+        noise.data.resize_(batch_size, nz)
+        noise.data.normal_(0, 1)
+        d = [label_c_hot_in[l] for l in lable_keys_cam_view_info[0]]
         d.append(noise)
         input_d = torch.cat(d, dim=1)
         input_d.data.resize_(batch_size, nz+sum(n_classes), 1, 1)
 
         with torch.no_grad():
-            sampled= netG.sampler(netG.encoder(input))
-            d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[0]]
-            d.append(sampled)
-            input_d = torch.cat(d, dim=1)
-            input_d.data.resize_(batch_size, nz+sum(n_classes), 1, 1)
+            # sampled= netG.sampler(netG.encoder(input))
+            # d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[0]]
+            # d.append(sampled.view(batch_size,nz))
+            # input_d = torch.cat(d, dim=1)
+            # input_d.data.resize_(batch_size, nz+sum(n_classes), 1, 1)
             # encode the owther view
-            gen= netG.decoder(input_d)
+            gen = netG.decoder(input_d)
 
-        gen= fake_buffer.push_and_pop(gen)
+        gen = fake_buffer.push_and_pop(gen)
         # train real
-        input_white_noise= input + torch.randn(input.data.size()).cuda()*(0.5 * d_real_input_noise)
-        output_f, output_c= netD(input_white_noise)
-        errD_real= criterion(output_f, label.view(batch_size,1))
+        input_white_noise = input + torch.randn(input.data.size()).cuda()*(0.5 * d_real_input_noise)
+        output_f, output_c = netD(input_white_noise)
+        errD_real = criterion(output_f, label.view(batch_size, 1))
         loss_lables_real = 0
         for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
             l_c = criterion_c(out, label_c[key_l])
-            loss_lables_real+=l_c
-            errD_real+=l_c
+            loss_lables_real += l_c
+            errD_real += l_c
         errD_real.backward()
-        D_x= output_f.data.mean()
+        D_x = output_f.data.mean()
 
-        if  i % opt.showimg == 0:
+        if i % opt.showimg == 0:
             if vis is not None:
-                gen_win= vis.image(gen.data[0].cpu()*0.5+0.5, win=gen_win,
+                gen_win = vis.image(gen.data[0].cpu()*0.5+0.5, win=gen_win,
                                     opts=dict(title='gen fake', width=300, height=300),)
-            n= min(batch_size, 8)
-            imgs= torch.cat([gen[:n]])*0.5+0.5
+            n = min(batch_size, 8)
+            imgs = torch.cat([gen[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(
                 opt.outf, "images/ep{}_step{}_gen_fake.png".format(epoch, i))), nrow=n)
             save_image(input_white_noise[:n]*0.5+0.5, os.path.expanduser(os.path.join(
                 opt.outf, "images/ep{}_step{}input_white_noise.png".format(epoch, i))), nrow=n)
         label.data.fill_(fake_label)
 
-        output_f, output_c= netD(gen.detach())
-        errD_fake= criterion(output_f, label.view(batch_size,1))
+        output_f, output_c = netD(gen.detach())
+        errD_fake = criterion(output_f, label.view(batch_size, 1))
         for key_l, out in zip(lable_keys_cam_view_info[0], output_c):
             errD_fake += criterion_c(out, label_c[key_l])
 
         errD_fake.backward()
-        D_G_z1= output_f.data.mean()
-        errD= errD_real + errD_fake
+        D_G_z1 = output_f.data.mean()
+        errD = errD_real + errD_fake
         # [p.grad.data.clamp_(-5, 5) for p in netD.parameters()]
         optimizerD.step()
         ############################
@@ -571,35 +572,35 @@ for epoch in range(opt.niter):
         ###########################
         input.data.resize_(real_cpu.size()).copy_(data[key_views[1]])
 
-        netG.zero_grad()
+        optimizerG.zero_grad()
 
-        encoded= netG.encoder(input)
-        mu= encoded[0]
-        logvar= encoded[1]
-        KLD_element= mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-        KLD= torch.sum(KLD_element).mul_(-0.5)
-        sampled= netG.sampler(encoded)
-        d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[1]]
-        d.append(sampled.view(batch_size,nz))
+        encoded = netG.encoder(input)
+        mu = encoded[0]
+        logvar = encoded[1]
+        KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+        KLD = torch.sum(KLD_element).mul_(-0.5)
+        sampled = netG.sampler(encoded)
+        d = [label_c_hot_in[l] for l in lable_keys_cam_view_info[1]]
+        d.append(sampled.view(batch_size, nz))
         input_d = torch.cat(d, dim=1).view(batch_size, nz+sum(n_classes), 1, 1)
-        rec= netG.decoder(input_d)
+        rec = netG.decoder(input_d)
         if i % opt.showimg == 0:
             if vis is not None:
-                rec_win= vis.image(rec.data[0].cpu()*0.5+0.5, win=rec_win,
+                rec_win = vis.image(rec.data[0].cpu()*0.5+0.5, win=rec_win,
                                     opts=dict(title='gen real', width=300, height=300))
-            imgs= torch.cat([input[:n], rec[:n]])*0.5+0.5
+            imgs = torch.cat([input[:n], rec[:n]])*0.5+0.5
             save_image(imgs, os.path.expanduser(os.path.join(
                 opt.outf, "images/ep{}_step{}_gen_real.png".format(epoch, i))), nrow=n)
-        MSEerr= MSECriterion(rec, input)
+        MSEerr = MSECriterion(rec, input)
 
-        VAEerr= KLD + MSEerr
-        VAEerr.backward(retain_graph=True)
-        optimizerG.step()
+        VAEerr = KLD + MSEerr
+      #   VAEerr.backward(retain_graph=True)
+        # optimizerG.step()
 
         ############################
         # (3) Update G network: maximize log(D(G(z)))
         ###########################
-        netG.zero_grad()  # correct?
+        # netG.zero_grad()  # correct?
 
         label.data.fill_(real_label)  # fake labels are real for generator cost
 #         noise.data.resize_(batch_size, nz, 1, 1)
@@ -608,27 +609,27 @@ for epoch in range(opt.niter):
         # unroll setp
         if unrolled_steps > 0:
             with torch.no_grad():
-                d_fake_data= netG(input)
-            backup_D= netD.state_dict()
-            backup_optimizerD= optimizerD.state_dict()
+                d_fake_data = netG(input)
+            backup_D = netD.state_dict()
+            backup_optimizerD = optimizerD.state_dict()
             for _ in range(unrolled_steps):
                 d_unrolled_loop(batch_size, d_fake_data)  # with real or fake?
 
-        sampled= netG.sampler(netG.encoder(input))
+        sampled = netG.sampler(netG.encoder(input))
         # sampled = np.cat([sampled, *[label_c_hot_in[l] for l in lable_keys_cam_view_info[1]]], dim=1)
-        d= [label_c_hot_in[l] for l in lable_keys_cam_view_info[1]]
-        d.append(sampled.view(batch_size,nz))
+        d = [label_c_hot_in[l] for l in lable_keys_cam_view_info[1]]
+        d.append(sampled.view(batch_size, nz))
         input_d = torch.cat(d, dim=1).view(batch_size, nz+sum(n_classes), 1, 1)
 
-        rec= netG.decoder(input_d)
+        rec = netG.decoder(input_d)
 
-        output_f, output_c= netD(rec)
-        errG= criterion(output_f, label.view(batch_size,1))
+        output_f, output_c = netD(rec)
+        errG = criterion(output_f, label.view(batch_size, 1))
         for key_l, out in zip(lable_keys_cam_view_info[1], output_c):
             errG += criterion_c(out, label_c[key_l])
-
-        errG.backward(retain_graph=True)
-        D_G_z2= output_f.data.mean()
+        loss = errG+VAEerr
+        loss.backward(retain_graph=True)
+        D_G_z2 = output_f.data.mean()
         # [p.grad.data.clamp_(-5, 5) for p in netG.decoder.parameters()]
         optimizerG.step()
 
@@ -648,4 +649,3 @@ for epoch in range(opt.niter):
                    (opt.outf, epoch))
         torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' %
                    (opt.outf, epoch))
-
